@@ -4,7 +4,8 @@
   "description": "Bankai assets compiler for Fastify",
   "main": "index.js",
   "scripts": {
-    "test": "standard && tap test.js"
+    "deps": "dependency-check . && dependency-check . --extra --no-dev",
+    "test": "standard && npm run deps && tap test.js"
   },
   "repository": {
     "type": "git",
@@ -27,6 +28,7 @@
   },
   "homepage": "https://github.com/fastify/fastify-bankai#readme",
   "devDependencies": {
+    "dependency-check": "^2.9.2",
     "fastify": "^0.37.0",
     "pre-commit": "^1.2.2",
     "shot": "^4.0.4",
@@ -35,6 +37,8 @@
   },
   "dependencies": {
     "bankai": "^9.1.0",
-    "fastify-plugin": "^0.2.1"
+    "fastify-plugin": "^0.2.1",
+    "http-gzip-maybe": "^1.0.0",
+    "pump": "^2.0.0"
   }
 }
