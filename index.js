@@ -1,8 +1,9 @@
 'use strict'
 
-const createReadStream = require('fs').createReadStream
 const resolve = require('path').resolve
 const bankai = require('bankai')
+const gzipMaybe = require('http-gzip-maybe')
+const pump = require('pump')
 const fp = require('fastify-plugin')
 
 function assetsCompiler (fastify, opts, next) {
@@ -12,48 +13,95 @@ function assetsCompiler (fastify, opts, next) {
   if (typeof opts.entry !== 'string') {
     return next(new Error('entry must be a string'))
   }
-  if (opts.html && typeof opts.html !== 'string') {
-    return next(new Error('html must be a string'))
-  }
 
   var prefix = (opts.prefix || '').replace(/^\/?(.*)\/+$/, '/$1')
+  var ssr
   delete opts.prefix
-  const html = !!opts.html
-  const htmlPath = resolve(opts.html || '')
-  const assets = bankai(resolve(opts.entry || ''), opts)
+  const compiler = bankai(resolve(opts.entry || ''), opts)
+  compiler.on('error', function (topic, sub, err) {
+    fastify.setErrorHandler((error, reply) => {
+      error = err
+      if (err.pretty) reply.send(err.pretty)
+      else reply.send(`${topic}:${sub} ${err.message}\n${err.stack}`)
+    })
+  })
+  compiler.on('ssr', function (result) {
+    ssr = result
+  })
 
   if (prefix && prefix.indexOf('/') !== 0) {
     prefix = '/' + prefix
   }
 
   fastify.get(`${prefix || '/'}`, (req, reply) => {
-    reply
-      .header('Content-Type', 'text/html')
-      .send(html ? createReadStream(htmlPath) : assets.html(req.req, reply.res))
+    var url = req.req.url
+
+    if (ssr && ssr.renderRoute) {
+      ssr.renderRoute(url, function (err, buffer) {
+        if (err) {
+          ssr.success = false
+          ssr.error = err
+          return sendDocument(url, req.req, reply.res, next)
+        }
+
+        reply.header('content-type', 'text/html')
+        gzip(buffer, req.req, reply.res)
+      })
+    } else {
+      return sendDocument(url, req.req, reply.res, next)
+    }
+
+    function sendDocument (url, req, res, next) {
+      compiler.documents(url, function (err, node) {
+        if (err) {
+          return compiler.documents('/404', function (err, node) {
+            if (err) return next() // No matches found, call next
+            res.statusCode = 404
+            res.setHeader('content-type', 'text/html')
+            gzip(node.buffer, req, res)
+          })
+        }
+        res.setHeader('content-type', 'text/html')
+        gzip(node.buffer, req, res)
+      })
+    }
   })
 
   fastify.get(`${prefix}/:file`, (req, reply) => {
-    switch (req.params.file.split('.').pop()) {
-      case 'html':
-        return reply
-          .header('content-type', 'text/html')
-          .send(assets.html(req.req, reply.res))
-      case 'css':
-        return reply
-          .header('content-type', 'text/css')
-          .send(assets.css(req.req, reply.res))
-      case 'js':
-        return reply
-          .header('content-type', 'text/javascript')
-          .send(assets.js(req.req, reply.res))
-      default:
-        return reply
-          .code(404)
-          .send(new Error('Asset not found'))
+    var filename = req.params.file
+    var extension = req.params.file.split('.').pop()
+    if (extension === 'js') {
+      compiler.scripts(filename, (err, node) => {
+        if (err) {
+          return reply
+            .code(404)
+            .send(err.message)
+        }
+        reply.header('content-type', 'application/javascript')
+        gzip(node.buffer, req.req, reply.res)
+      })
+    } else if (extension === 'html') {
+      compiler.documents(filename, (err, node) => {
+        if (err) {
+          return reply
+            .code(404)
+            .send(err.message)
+        }
+        reply.header('content-type', 'text/html')
+        gzip(node.buffer, req.req, reply.res)
+      })
+    } else {
+      reply.redirect(404, '/')
     }
   })
 
   next()
 }
 
-module.exports = fp(assetsCompiler, '>= 0.27.0')
+module.exports = fp(assetsCompiler, '>= 0.37.0')
+
+function gzip (buffer, req, res) {
+  var zipper = gzipMaybe(req, res)
+  pump(zipper, res)
+  zipper.end(buffer)
+}
