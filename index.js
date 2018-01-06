@@ -14,7 +14,6 @@ function assetsCompiler (fastify, opts, next) {
     return next(new Error('entry must be a string'))
   }
 
-  var prefix = (opts.prefix || '').replace(/^\/?(.*)\/+$/, '/$1')
   var ssr
   delete opts.prefix
   const compiler = bankai(resolve(opts.entry || ''), opts)
@@ -29,11 +28,7 @@ function assetsCompiler (fastify, opts, next) {
     ssr = result
   })
 
-  if (prefix && prefix.indexOf('/') !== 0) {
-    prefix = '/' + prefix
-  }
-
-  fastify.get(`${prefix || '/'}`, (req, reply) => {
+  fastify.get('/', (req, reply) => {
     var url = req.req.url
 
     if (ssr && ssr.renderRoute) {
@@ -67,8 +62,9 @@ function assetsCompiler (fastify, opts, next) {
     }
   })
 
-  fastify.get(`${prefix}/:file`, (req, reply) => {
+  fastify.get('/:file', (req, reply) => {
     var filename = req.params.file
+
     var extension = req.params.file.split('.').pop()
     if (extension === 'js') {
       compiler.scripts(filename, (err, node) => {
